@@ -14,15 +14,18 @@ use ratatui::{
 use std::{io, time::Duration};
 use std::process::Command;
 
+#[derive(Debug, PartialEq)]
 enum InputMode {
     Normal,
     EditingSource,
     EditingRegex,
+    EditingReplace,
 }
 
 struct App {
     source_text: String,
     regex_input: String,
+    replace_input: String,
     output_text: String,
     input_mode: InputMode,
     status_message: String,
@@ -31,17 +34,18 @@ struct App {
 impl Default for App {
     fn default() -> App {
         App {
-            source_text: "Hola Gabriel! Proba escribir algo aca.".to_string(),
+            source_text: "Praliné saber no ocupa el lugar de argentino.".to_string(),
             regex_input: String::new(),
+            replace_input: String::new(),
             output_text: String::new(),
             input_mode: InputMode::Normal,
-            status_message: "Listo. 's' editar texto, 'r' regex, 'TAB' IA".to_string(),
+            status_message: "Listo. 's': Fuente, 'r': Regex, 't': Reemplazar, 'TAB': IA".to_string(),
         }
     }
 }
 
 impl App {
-    fn apply_regex(&mut self) {
+    fn apply_transform(&mut self) {
         if self.regex_input.is_empty() {
             self.output_text = self.source_text.clone();
             return;
@@ -55,12 +59,17 @@ impl App {
             }
         };
 
-        // Improved logic: Show matches found
-        let matches: Vec<&str> = re.find_iter(&self.source_text).map(|m| m.as_str()).collect();
-        if matches.is_empty() {
-            self.output_text = "(No hay coincidencias)".to_string();
+        if self.replace_input.is_empty() {
+            // MODO FILTRO (Grep): Mostrar solo coincidencias
+            let matches: Vec<&str> = re.find_iter(&self.source_text).map(|m| m.as_str()).collect();
+            if matches.is_empty() {
+                self.output_text = "(No hay coincidencias)".to_string();
+            } else {
+                self.output_text = matches.join(" | ");
+            }
         } else {
-            self.output_text = matches.join(" | ");
+            // MODO REEMPLAZO (Sed): Mostrar texto completo con cambios
+            self.output_text = re.replace_all(&self.source_text, &self.replace_input).to_string();
         }
     }
 
@@ -72,7 +81,6 @@ impl App {
             self.regex_input, self.source_text
         );
 
-        // Usamos la ruta absoluta al .cmd de npm para asegurar que Windows lo encuentre
         let output = Command::new("cmd")
             .arg("/C")
             .arg("gemini")
@@ -92,7 +100,7 @@ impl App {
                         .to_string();
                     self.regex_input = clean;
                     self.status_message = "Sugerencia aplicada!".to_string();
-                    self.apply_regex();
+                    self.apply_transform();
                 } else {
                     self.status_message = "Gemini devolvió vacío.".to_string();
                 }
@@ -116,7 +124,7 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::default();
-    app.apply_regex(); 
+    app.apply_transform(); 
     let res = run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;
@@ -140,7 +148,6 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                // CORRECCION A: Evitar duplicación filtrando solo eventos de presión
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
@@ -150,11 +157,15 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                         KeyCode::Char('q') => return Ok(()),
                         KeyCode::Char('s') => {
                             app.input_mode = InputMode::EditingSource;
-                            app.source_text.clear(); // Limpiamos para que escribas de cero
+                            app.source_text.clear();
                         }
                         KeyCode::Char('r') => {
                             app.input_mode = InputMode::EditingRegex;
-                            app.regex_input.clear(); // Limpiamos para la nueva regex
+                            app.regex_input.clear();
+                        }
+                        KeyCode::Char('t') => {
+                            app.input_mode = InputMode::EditingReplace;
+                            app.replace_input.clear();
                         }
                         KeyCode::Tab => {
                             app.suggest_ai();
@@ -163,36 +174,27 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                     },
                     InputMode::EditingSource => match key.code {
                         KeyCode::Esc => app.input_mode = InputMode::Normal,
-                        KeyCode::Char(c) => {
-                            app.source_text.push(c);
-                        }
-                        KeyCode::Backspace => {
-                            app.source_text.pop();
-                        }
-                        KeyCode::Enter => {
-                            app.source_text.push('\n');
-                        }
-                        _ => {
-                            // Aplicar regex cada vez que cambia el texto
-                            app.apply_regex();
-                        }
+                        KeyCode::Char(c) => app.source_text.push(c),
+                        KeyCode::Backspace => { app.source_text.pop(); },
+                        KeyCode::Enter => app.source_text.push('\n'),
+                        _ => {}
                     },
                     InputMode::EditingRegex => match key.code {
                         KeyCode::Esc => app.input_mode = InputMode::Normal,
-                        KeyCode::Char(c) => {
-                            app.regex_input.push(c);
-                        }
-                        KeyCode::Backspace => {
-                            app.regex_input.pop();
-                        }
-                        KeyCode::Enter => {
-                            app.input_mode = InputMode::Normal;
-                        }
+                        KeyCode::Char(c) => app.regex_input.push(c),
+                        KeyCode::Backspace => { app.regex_input.pop(); },
+                        KeyCode::Enter => app.input_mode = InputMode::Normal,
+                        _ => {}
+                    },
+                    InputMode::EditingReplace => match key.code {
+                        KeyCode::Esc => app.input_mode = InputMode::Normal,
+                        KeyCode::Char(c) => app.replace_input.push(c),
+                        KeyCode::Backspace => { app.replace_input.pop(); },
+                        KeyCode::Enter => app.input_mode = InputMode::Normal,
                         _ => {}
                     },
                 }
-                // Actualizar preview después de cualquier cambio
-                app.apply_regex();
+                app.apply_transform();
             }
         }
     }
@@ -204,60 +206,70 @@ fn ui(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints(
             [
-                Constraint::Length(3), 
-                Constraint::Min(5),    
-                Constraint::Length(3), 
-                Constraint::Min(5),    
-                Constraint::Length(3), 
+                Constraint::Length(3), // Title
+                Constraint::Min(4),    // Source
+                Constraint::Length(3), // Regex
+                Constraint::Length(3), // Replace
+                Constraint::Min(4),    // Output
+                Constraint::Length(3), // Help
             ]
             .as_ref(),
         )
         .split(area);
 
-    let title_text = format!(" REGEX WYSIWYG - MODO: {:?} ", match app.input_mode {
+    let mode_name = match app.input_mode {
         InputMode::Normal => "EXPLORAR",
         InputMode::EditingSource => "EDITANDO FUENTE",
         InputMode::EditingRegex => "EDITANDO REGEX",
-    });
+        InputMode::EditingReplace => "EDITANDO REEMPLAZO",
+    };
 
-    let title = Paragraph::new(title_text)
+    let title = Paragraph::new(format!(" REGEX WYSIWYG - MODO: {} ", mode_name))
         .style(Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD))
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
 
-    let source_style = if matches!(app.input_mode, InputMode::EditingSource) {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-    let source = Paragraph::new(app.source_text.as_str())
-        .style(source_style)
-        .wrap(Wrap { trim: true })
-        .block(Block::default().borders(Borders::ALL).title(" [Source Text] (Press 's' para limpiar y editar) "));
-    f.render_widget(source, chunks[1]);
+    let source_style = if app.input_mode == InputMode::EditingSource { Style::default().fg(Color::Yellow) } else { Style::default() };
+    f.render_widget(
+        Paragraph::new(app.source_text.as_str())
+            .style(source_style)
+            .wrap(Wrap { trim: true })
+            .block(Block::default().borders(Borders::ALL).title(" [Source Text] ('s') ")),
+        chunks[1]
+    );
 
-    let regex_style = if matches!(app.input_mode, InputMode::EditingRegex) {
-        Style::default().fg(Color::Magenta)
-    } else {
-        Style::default()
-    };
-    let regex_input = Paragraph::new(app.regex_input.as_str())
-        .style(regex_style)
-        .block(Block::default().borders(Borders::ALL).title(" [Regex / IA Prompt] (Press 'r' para editar) "));
-    f.render_widget(regex_input, chunks[2]);
+    let regex_style = if app.input_mode == InputMode::EditingRegex { Style::default().fg(Color::Magenta) } else { Style::default() };
+    f.render_widget(
+        Paragraph::new(app.regex_input.as_str())
+            .style(regex_style)
+            .block(Block::default().borders(Borders::ALL).title(" [Regex Pattern] ('r') ")),
+        chunks[2]
+    );
 
-    let output = Paragraph::new(app.output_text.as_str())
-        .wrap(Wrap { trim: true })
-        .style(Style::default().fg(Color::Green))
-        .block(Block::default().borders(Borders::ALL).title(" [Output Preview] "));
-    f.render_widget(output, chunks[3]);
+    let replace_style = if app.input_mode == InputMode::EditingReplace { Style::default().fg(Color::LightBlue) } else { Style::default() };
+    f.render_widget(
+        Paragraph::new(app.replace_input.as_str())
+            .style(replace_style)
+            .block(Block::default().borders(Borders::ALL).title(" [Replace With] ('t' - sed mode) ")),
+        chunks[3]
+    );
+
+    f.render_widget(
+        Paragraph::new(app.output_text.as_str())
+            .wrap(Wrap { trim: true })
+            .style(Style::default().fg(Color::Green))
+            .block(Block::default().borders(Borders::ALL).title(" [Output Preview] ")),
+        chunks[4]
+    );
 
     let help_text = match app.input_mode {
         InputMode::Normal => format!("{} | q: Salir", app.status_message),
-        _ => "Esc: Confirmar | Backspace: Borrar".to_string(),
+        _ => "Esc: Confirmar edición".to_string(),
     };
-    let help = Paragraph::new(help_text)
-        .style(Style::default().fg(Color::Gray))
-        .block(Block::default().borders(Borders::ALL));
-    f.render_widget(help, chunks[4]);
+    f.render_widget(
+        Paragraph::new(help_text)
+            .style(Style::default().fg(Color::Gray))
+            .block(Block::default().borders(Borders::ALL)),
+        chunks[5]
+    );
 }
