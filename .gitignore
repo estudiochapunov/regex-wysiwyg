@@ -5,3 +5,8 @@ compiled/
 *.bak
 \#*
 .\#*
+
+
+# Added by cargo
+
+/target
