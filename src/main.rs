@@ -55,26 +55,27 @@ impl App {
             }
         };
 
-        let mut out = String::new();
-        for line in self.source_text.lines() {
-            if re.is_match(line) {
-                out.push_str(line);
-                out.push('\n');
-            }
+        // Improved logic: Show matches found
+        let matches: Vec<&str> = re.find_iter(&self.source_text).map(|m| m.as_str()).collect();
+        if matches.is_empty() {
+            self.output_text = "(No hay coincidencias)".to_string();
+        } else {
+            self.output_text = matches.join(" | ");
         }
-        self.output_text = out;
     }
 
     fn suggest_ai(&mut self) {
         self.status_message = "Consultando a Gemini IA...".to_string();
         
         let prompt = format!(
-            "Give me ONLY the regex pattern (no text, no backticks) to match this: '{}' in the text: '{}'.",
+            "Give me ONLY the regex pattern (no text, no backticks, no markdown) to match or extract this: '{}' in the text: '{}'.",
             self.regex_input, self.source_text
         );
 
-        // Cambiamos a gemini -p para modo no interactivo
-        let output = Command::new("gemini")
+        // Usamos la ruta absoluta al .cmd de npm para asegurar que Windows lo encuentre
+        let output = Command::new("cmd")
+            .arg("/C")
+            .arg("gemini")
             .arg("-p")
             .arg(prompt)
             .output();
@@ -83,7 +84,6 @@ impl App {
             Ok(out) if out.status.success() => {
                 let suggestion = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !suggestion.is_empty() {
-                    // Limpiamos posibles formatos de markdown que a veces devuelve la IA
                     let clean = suggestion
                         .replace("```regex", "")
                         .replace("```", "")
@@ -91,14 +91,18 @@ impl App {
                         .trim()
                         .to_string();
                     self.regex_input = clean;
-                    self.status_message = "Sugerencia de Gemini aplicada!".to_string();
+                    self.status_message = "Sugerencia aplicada!".to_string();
                     self.apply_regex();
                 } else {
-                    self.status_message = "Gemini no devolvió una respuesta clara.".to_string();
+                    self.status_message = "Gemini devolvió vacío.".to_string();
                 }
             }
-            _ => {
-                self.status_message = "Error: no se pudo ejecutar 'gemini -p'".to_string();
+            Err(e) => {
+                self.status_message = format!("Error de ejecución: {}", e);
+            }
+            Ok(out) => {
+                let err_msg = String::from_utf8_lossy(&out.stderr);
+                self.status_message = format!("Gemini Error: {}", err_msg.chars().take(30).collect::<String>());
             }
         }
     }
